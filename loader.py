@@ -5,9 +5,6 @@ import time
 
 from numpy import pi, radians
 
-# Record start time
-start_time = time.time()
-
 
 def to_rad(hue):
     return hue * 2 * pi / 255  # to float64
@@ -18,30 +15,29 @@ def to_int(hue):
 
 
 # Load the image
-image_path = "./pic/sample1.png"
+image_path = "./pic/sample2.png"
 image = Image.open(image_path)
 rgb = np.array(image)
 hsv = np.array(image.convert("HSV"))
 arr_shape = hsv.shape
-H, S, V = np.transpose(np.reshape(hsv, (-1, 3)))
-# print(len(H), np.unique(H)) # 0-255
-H = to_rad(H)
+H, S, V = np.transpose(np.reshape(hsv, (-1, 3))).astype(np.int32)
 
-# del hsv
+# print(H.dtype)
+# exit()
 
-# print(len(H), np.unique(H))
+# Record start time
+start_time = time.time()
 
-# Find the best harmonic template and orientation
-best_template, best_alpha = find_best_template(H, S)
+best_template = find_best_template(H, S)
 # best_template, best_alpha = "I", radians(0)
-print(f"Best harmonic template: {best_template}")
-print(f"Best orientation: {best_alpha / pi * 180} degrees")
 
 # Record end time
 end_time = time.time()
 # Calculate elapsed time
 elapsed_time = end_time - start_time
 
+print(f"Best harmonic template: {best_template.name}")
+print(f"Best alpha: {best_template.alpha}")
 print("Elapsed time:", elapsed_time, "seconds")
 exit()
 # Harmonize the colors

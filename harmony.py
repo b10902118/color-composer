@@ -4,6 +4,7 @@ from scipy.stats import norm
 
 from numpy import pi, radians
 from numbers import Number
+from tqdm import tqdm
 
 
 def rad_distance(h1, h2):  # in radians
@@ -11,33 +12,39 @@ def rad_distance(h1, h2):  # in radians
     return d if d < pi else 2 * pi - d
 
 
+def ring_distance(h1, h2):
+    d = abs(h1 - h2)
+    return min(d, 256 - d)
+
+
 class Sector:
-    st: float
-    ed: float
+    st: np.int32
+    ed: np.int32
 
-    def __init__(self, start: float, end: float):
-        self.st = start
-        self.ed = end
+    def __init__(self, start, size):
+        self.st = np.int32(start % 256)
+        self.ed = np.int32((start + size - 1) % 256)
+        if self.st < self.ed:
+            self._check_range = lambda h: (self.st <= h <= self.ed)
+        else:
+            self._check_range = lambda h: (h >= self.st or h <= self.ed)
 
-    def __add__(self, other: Number):
-        if not isinstance(other, Number):
-            raise ValueError("Can only add a number to a sector")
-        return Sector(self.st + other, self.ed + other)
+    # def __add__(self, other: Number):
+    #    if not isinstance(other, Number):
+    #        raise ValueError("Can only add a number to a sector")
+    #    return Sector((self.st + other) % 256, (self.ed + other) % 256)
 
     def __contains__(self, h: Number):
-        if h < 0 or h >= 2 * pi:
-            raise ValueError("Hue must be converted by radians() to be in [0, 2*pi)")
-        if self.st < self.ed:
-            return self.st <= h <= self.ed
-        else:  # If the range crosses the 2*pi boundary
-            return h >= self.ed or h <= self.st
+        if h < 0 or h > 255:
+            raise ValueError("Hue must be 0-255 int")
+        return self._check_range(h)
 
     def distance(self, h):
         if h in self:
             return 0
         return min(
-            rad_distance(h, self.st),
-            rad_distance(h, self.ed),
+            ring_distance(h, self.st),
+            ring_distance(h, self.ed),
         )
 
 
@@ -49,17 +56,21 @@ class Template:
         self,
         name: str,
         sector_sizes: list[float],
-        center_angles: list[float],
+        offsets: list[float],
         alpha: float,
     ):
         self.name = name
-        center_radians = [radians(angle + alpha) for angle in center_angles]
+        self.alpha = alpha
         self.sectors = [
-            Sector(radians(rad - size) / 2, radians(rad + size / 2))
-            for rad, size in zip(center_radians, sector_sizes)
+            Sector(alpha + off, size) for off, size in zip(offsets, sector_sizes)
         ]
+        self.dists = np.array([self._distance(h) for h in range(256)]).astype(np.int32)
 
-    def distance(self, h):  # may check in first for early return
+        # debug
+        if np.sum(self.dists) <= 0:
+            raise ValueError(f"{self.name} {self.alpha} {self.sectors} dists <=0")
+
+    def _distance(self, h):  # may check in first for early return
         min_dist = np.inf
         for sector in self.sectors:
             min_dist = min(min_dist, sector.distance(h))
@@ -68,37 +79,61 @@ class Template:
         return min_dist
 
 
-# Harmonic template types and sector widths (in radians)
+# Harmonic template types and sector widths (in 0-255)
+# 26% -> 66.56, 5% -> 12.8, 22% -> 56.32
 template_params = [
-    ("i", [pi * 2 * 0.05], [0]),
-    ("V", [pi * 2 * 0.26], [0]),
-    ("L", [pi * 2 * 0.22, pi * 2 * 0.05], [0, 90]),
-    ("I", [pi * 2 * 0.05, pi * 2 * 0.05], [0, 180]),
-    ("T", [pi], [0]),
-    ("Y", [pi * 2 * 0.26, pi * 2 * 0.05], [0, 180]),
-    ("X", [pi * 2 * 0.26, pi * 2 * 0.26], [0, 180]),
+    ("i", [13], [0]),
+    ("V", [67], [0]),
+    ("L", [57, 13], [0, 57 + 29]),
+    ("I", [13, 13], [0, 128]),
+    ("T", [128], [0]),
+    ("Y", [67, 13], [0, 180]),
+    ("X", [67, 67], [0, 128]),
 ]
 
 # old problem: single color
 
 
-def harmony_score(hues, saturations, param, alpha):
-    template = Template(*param, alpha)
-    return np.sum(template.distance(h) * s for h, s in zip(hues, saturations))
+def harmony_score(hue_weights, template):
+    # careful overflow
+    # return np.sum(np.vectorize(template.distance)(hues) * saturations / 255) # no faster
+
+    # debug
+    if np.any(hue_weights < 0):
+        raise ValueError("Weight negative")
+    s = np.sum(template.dists * hue_weights)
+    if s == 0:
+        raise ValueError("sum is zero")
+    return s
 
 
-def find_best_template(hues, saturations):
+def minimize_alpha(hue_weights, param):
+    min_alpha = None
+    min_score = np.inf
+    # TODO speed up
+    for alpha in range(256):
+        score = harmony_score(hue_weights, Template(*param, alpha))
+        if score < min_score:
+            min_score, min_alpha = score, alpha
+    return min_score, min_alpha
+
+
+def find_best_template(hues, saturations) -> Template:
+    hue_weights = np.zeros(256).astype(np.float32)  # don't care precision
+    for h, s in zip(hues, saturations / 256):
+        hue_weights[h] += s
+
     best_param = None
+    best_alpha = None
     min_score = np.inf
     for param in template_params:
-        res = minimize_scalar(
-            lambda alpha: harmony_score(hues, saturations, param, alpha)
-        )
-        score = res.fun
+        score, alpha = minimize_alpha(hue_weights, param)
+        # TODO wide sector panalty
+        # print(param[0], score, alpha)
         if score < min_score:
-            min_score = score
-            best_param = (*param, res.x)
-    return best_param
+            min_score, best_param, best_alpha = score, param, alpha
+
+    return Template(*best_param, best_alpha)
 
 
 def harmonize_colors(hues, template_type, alpha, sigma=None):
