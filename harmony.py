@@ -5,6 +5,7 @@ from scipy.stats import norm
 from numpy import pi, radians
 from numbers import Number
 from tqdm import tqdm
+from itertools import product
 
 
 def rad_distance(h1, h2):  # in radians
@@ -17,13 +18,22 @@ def ring_distance(h1, h2):
     return min(d, 256 - d)
 
 
+def ring_distance_sign(h1, h2):
+    d = ring_distance(h1, h2)
+    if h1 + d == h2:
+        return d
+    return -d
+
+
 class Sector:
     st: np.int32
     ed: np.int32
 
     def __init__(self, start, size):
-        self.st = np.int32(start % 256)
+        self.st = np.int32(start % 256)  # %256
         self.ed = np.int32((start + size - 1) % 256)
+        self.width = size
+        self.center = (self.st + size // 2) % 256
         if self.st < self.ed:
             self._check_range = lambda h: (self.st <= h <= self.ed)
         else:
@@ -51,6 +61,7 @@ class Sector:
 class Template:
     name: str
     sectors: list[Sector]
+    alpha: np.int32
 
     def __init__(
         self,
@@ -87,9 +98,10 @@ template_params = [
     ("L", [57, 13], [0, 57 + 29]),
     ("I", [13, 13], [0, 128]),
     ("T", [128], [0]),
-    ("Y", [67, 13], [0, 180]),
+    ("Y", [67, 13], [0, (256 - 67) // 2 + 67 - 6]),
     ("X", [67, 67], [0, 128]),
 ]
+template_params_dict = {param[0]: param[:] for param in template_params}
 
 # old problem: single color
 
@@ -102,8 +114,8 @@ def harmony_score(hue_weights, template):
     if np.any(hue_weights < 0):
         raise ValueError("Weight negative")
     s = np.sum(template.dists * hue_weights)
-    if s == 0:
-        raise ValueError("sum is zero")
+    # if s == 0:
+    #    raise ValueError("sum is zero")
     return s
 
 
@@ -136,30 +148,49 @@ def find_best_template(hues, saturations) -> Template:
     return Template(*best_param, best_alpha)
 
 
-def harmonize_colors(hues, template_type, alpha, sigma=None):
-    template_sectors = T[template_type]
-    new_hues = np.zeros_like(hues)
-    for i, h in enumerate(hues):
+def binary_partition(hues, template: Template):
+    # primitive
+    partition = []
+    min_max = 0
+    for h in hues:
         min_dist = np.inf
-        closest_sector = None
-        for j, sector in enumerate(template_sectors):
-            sector_start = alpha + sum(template_sectors[:j])
-            sector_end = sector_start + sector
-            dist = min(
-                abs(h - sector_start),
-                abs(h - sector_end),
-                min(sector_end - h, h - sector_start),
-            )
+        closest_sector_index = None
+        for i, sector in enumerate(template.sectors):
+            dist = sector.distance(h)
             if dist < min_dist:
                 min_dist = dist
-                closest_sector = j
-        sector_width = template_sectors[closest_sector]
-        sector_center = (
-            alpha + sum(template_sectors[:closest_sector]) + sector_width / 2
-        )
-        if sigma is None:
-            sigma = sector_width / 2
-        new_hues[i] = (
-            sector_center + (1 - norm.pdf(min_dist, scale=sigma)) * sector_width / 2
-        )
-    return new_hues
+                closest_sector_index = i
+        min_max = max(min_max, min_dist)
+        partition.append(closest_sector_index)
+    # print(min_max)
+    return partition
+
+
+def shift_color(hues, partition, template: Template):
+    shifted_hues = []
+
+    new_hues = np.empty((len(template.sectors), 256), dtype=int)
+    s_h_combinations = product(range(len(template.sectors)), range(256))
+    for s, h in s_h_combinations:
+        if s == 2:
+            continue
+        sector = template.sectors[s]
+        C = sector.center  # central hue of the sector
+        w = sector.width  # arc-width of the sector
+        d = ring_distance_sign(C, h)
+        G_sigma = norm.cdf(d / (w / 2))  # Gaussian function
+        new_hue = C + (w / 2) * G_sigma
+        new_hue = int(new_hue) % 256
+        new_hues[s, h] = new_hue
+
+    for h, s in zip(hues, partition):
+        # sector = template.sectors[s]
+        # C = sector.center  # central hue of the sector
+        # w = sector.width  # arc-width of the sector
+        # d = ring_distance_sign(C, h)
+        # G_sigma = norm.cdf(d / (w / 2))  # Gaussian function
+        ## print(d, w, G_sigma)
+        # new_hue = C + (w / 2) * (1 - G_sigma)
+        # new_hue = int(new_hue) % 256
+        shifted_hues.append(new_hues[s, h])
+    return np.array(shifted_hues)
