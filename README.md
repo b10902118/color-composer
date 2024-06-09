@@ -2,13 +2,23 @@
 
 Color Composer is a Python-based project that provides a user-friendly interface for color harmonization in images. The project uses `PyQt5` for the GUI and `PIL`, `numpy` for image processing.
 
-![](./demo/demo.gif)
-
 ### How to Use
 
 ```shell
 python qt.py
 ```
+
+#### Auto select template
+
+![](./demo/1.gif)
+
+#### Manually select template
+
+![](./demo/2.gif)
+
+#### Harmonize selected area
+
+![](./demo/3.gif)
 
 ### Code Structure
 
