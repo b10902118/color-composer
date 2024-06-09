@@ -38,6 +38,6 @@ python qt.py
 
 ## TODO
 
-- [] Add color layers decomposition
-- [] More shape of selection
-- [] Undo & Redo
+- [ ] Add color layers decomposition
+- [ ] More shape of selection
+- [ ] Undo & Redo
